@@ -33,7 +33,7 @@ extension Derived {
     // CHECK: same: true
     print("same: \(keyPaths[0] == \Self.first)")
     // CHECK: different: true
-    print("different: \(keyPaths[0] != keyPaths[3])")
+    print("different: \(keyPaths[1] != keyPaths[3])")
   }
 }
 

@@ -920,6 +920,8 @@ emitKeyPathComponent(IRGenModule &IGM,
         auto &protoInfo =
             IGM.getProtocolInfo(methodProto, ProtocolInfoKind::Full);
         auto index = protoInfo.getFunctionIndex(declRef);
+        // The requirements-base symbol is one entry before the first
+        // requirement, matching the conformance pointer in witness tables.
         auto *entryIndex = llvm::ConstantInt::get(
             IGM.SizeTy, index.getValue() + WitnessTableFirstRequirementOffset);
         auto *requirement = llvm::ConstantExpr::getGetElementPtr(
