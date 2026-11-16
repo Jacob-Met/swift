@@ -898,29 +898,46 @@ emitKeyPathComponent(IRGenModule &IGM,
 
         auto dc = declRef.getDecl()->getDeclContext();
 
-        // We can use a method descriptor if we have a class or resilient
-        // protocol.
+        // Resilient requirements and class methods have method descriptors.
         if (isa<ClassDecl>(dc) ||
             IGM.isResilient(cast<NominalTypeDecl>(dc),
                             ResilienceExpansion::Minimal)) {
           idKind = KeyPathComponentHeader::Pointer;
           auto idRef = IGM.getAddrOfLLVMVariableOrGOTEquivalent(
-            LinkEntity::forMethodDescriptor(declRef));
-
+              LinkEntity::forMethodDescriptor(declRef));
           idValue = idRef.getValue();
           idResolution = idRef.isIndirect()
-            ? KeyPathComponentHeader::IndirectPointer
-            : KeyPathComponentHeader::Resolved;
+              ? KeyPathComponentHeader::IndirectPointer
+              : KeyPathComponentHeader::Resolved;
           break;
         }
-      
-        idKind = KeyPathComponentHeader::VTableOffset;
-        auto methodProto = cast<ProtocolDecl>(dc);
-        auto &protoInfo = IGM.getProtocolInfo(methodProto,
-                                              ProtocolInfoKind::Full);
+
+        // A witness-table slot is only unique within its protocol. Use the
+        // address of its requirement entry in the protocol descriptor as the
+        // identity instead: the requirements-base symbol is already emitted
+        // for non-resilient protocols, even by older compiler versions.
+        auto *methodProto = cast<ProtocolDecl>(dc);
+        auto &protoInfo =
+            IGM.getProtocolInfo(methodProto, ProtocolInfoKind::Full);
         auto index = protoInfo.getFunctionIndex(declRef);
-        idValue = llvm::ConstantInt::getSigned(IGM.SizeTy, -index.getValue());
-        idResolution = KeyPathComponentHeader::Resolved;
+        auto *entryIndex = llvm::ConstantInt::get(
+            IGM.SizeTy, index.getValue() + WitnessTableFirstRequirementOffset);
+        auto *requirement = llvm::ConstantExpr::getGetElementPtr(
+            IGM.ProtocolRequirementStructTy,
+            IGM.getAddrOfProtocolRequirementsBaseDescriptor(methodProto),
+            entryIndex);
+        // The identity may live in another shared library. Store its absolute
+        // address in a local pointer so the key path's relative reference does
+        // not require an out-of-range PC-relative relocation at link time.
+        auto *identity = new llvm::GlobalVariable(
+            IGM.Module, IGM.Int8PtrTy, /*constant*/ true,
+            llvm::GlobalValue::PrivateLinkage, requirement,
+            "keypath_protocol_requirement_id");
+        identity->setAlignment(
+            llvm::MaybeAlign(IGM.getPointerAlignment().getValue()));
+        idKind = KeyPathComponentHeader::Pointer;
+        idValue = identity;
+        idResolution = KeyPathComponentHeader::IndirectPointer;
       }
       break;
     }
